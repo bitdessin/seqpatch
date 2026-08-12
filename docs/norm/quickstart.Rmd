@@ -1,0 +1,62 @@
+## Quick example
+
+```{r qs-setup, include=FALSE}
+source("_config.R")
+```
+
+This section presents a standard DEGES-based normalization workflow with `r pkg("seqpatch")`.
+The example shows how to load a count data, define the experimental groups,
+estimate normalization factors, convert the result to an `r pkg("edgeR", "bioc")` object,
+and fit an `r pkg("edgeR", "bioc")` quasi-likelihood model
+for differentially expressed gene (DEG) detection.
+
+
+```{r qs-workflow, results='hide', message=FALSE, warning=FALSE}
+library(edgeR)
+library(seqpatch)
+
+# gene expression
+count_data <- read.table("data/ath.counts.txt.gz",
+                         header = TRUE, sep = "\t", row.names = 1)
+keep <- rowSums(cpm(count_data) > 5) > (ncol(count_data) / 2)
+count_data <- as.matrix(count_data[keep, , drop = FALSE])
+
+# experimental groups
+group <- sapply(strsplit(colnames(count_data), "_"), "[", 1)
+exp_design <- data.frame(group = group)
+
+# data preparation
+x <- newSeqCountData(count_data, exp_design = exp_design)
+
+# calculate normalization factors
+x <- calc_nf(x)
+
+# convert to DGEList object for edgeR
+d <- as_DGEList(x)
+
+# statistical test
+design <- model.matrix(~ group, data = x@exp_design)
+d <- estimateDisp(d, design)
+fit <- glmQLFit(d, design)
+qlf <- glmQLFTest(fit, coef = 2)
+
+test_stats <- topTags(qlf, n = nrow(d$counts), sort.by = "none")$table
+```
+
+```{r qs-output}
+head(test_stats)
+```
+
+The output table contains one row per gene and reports the estimated log2 fold change (`logFC`),
+average log2 counts per million (`logCPM`), quasi-likelihood F-statistic (`F`),
+*p*-value (`PValue`), and adjusted *p*-value (i.e., *q*-value) (`FDR`).
+
+The DEG results can be visualized with `plot_ma()` by assigning a color to each gene.
+In this example, genes passing the selected false discovery rate (FDR)
+and fold change thresholds are highlighted.
+
+```{r qs-output-plot}
+is_deg <- (test_stats$FDR < 0.05) & (abs(test_stats$logFC) > 1)
+gene_colors <- ifelse(is_deg, "#B24745", "#ADADAD")
+plot_ma(x, col = gene_colors)
+```

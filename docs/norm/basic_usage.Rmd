@@ -1,0 +1,390 @@
+## Basic usage
+
+```{r cs-setup, include=FALSE}
+source("_config.R")
+```
+
+This section introduces practical DEGES-based normalization workflows with `r pkg("seqpatch")`.
+The examples follow the main steps in a typical analysis:
+load a count matrix, prepare the experimental design, estimate normalization factors,
+and perform differentially expressed gene (DEG) analysis.
+
+
+First, load the packages used in the examples.
+
+```{r cs-load-packages}
+library(edgeR)
+library(DESeq2)
+library(seqpatch)
+library(ggplot2)
+```
+
+As with `r pkg("edgeR", "bioc")` and `r pkg("DESeq2", "bioc")`,
+`r pkg("seqpatch")` requires raw, unnormalized integer counts as input.
+Do not use transcripts per million (TPM), fragments per kilobase of transcript per million mapped reads (FPKM),
+counts per million (CPM), normalized counts, or log-transformed expression values.
+
+
+
+### Two-group comparison
+
+A two-group comparison is one of the most common RNA-seq experimental designs.
+Examples include treatment versus control, mutant versus wild type, and one tissue versus another tissue.
+This section explains how to perform a two-group comparison
+using `r pkg("seqpatch")` with either `r pkg("edgeR", "bioc")` or `r pkg("DESeq2", "bioc")`.
+
+The prepared count data used in this example is available from the
+[`docs/data`](https://github.com/bitdessin/seqpatch/tree/main/docs/data) directory
+of the `r pkg("seqpatch")` GitHub repository.
+The original dataset is available from Expression Atlas under accession
+[E-MTAB-4391](https://www.ebi.ac.uk/gxa/experiments/E-MTAB-4391/).
+It profiles *Arabidopsis thaliana* roots grown under iron-deficient and control conditions [@E-MTAB-4391].
+
+```{r cs-tgc-ath-download-dataset}
+count_data <- read.table("data/ath.counts.txt.gz", header = TRUE, row.names = 1, sep = "\t")
+head(count_data)
+```
+
+Genes with little or no expression provide limited statistical information and can reduce power in DEG analysis.
+Here, we retain genes with more than 5 CPM in more than half of the samples for downstream analysis.
+
+```{r cs-tgc-ath-filter-genes}
+keep <- rowSums(cpm(count_data) > 5) > ncol(count_data) / 2
+count_data <- count_data[keep, , drop = FALSE]
+dim(count_data)
+```
+
+Next, prepare the experimental design.
+The experimental condition is stored in a data frame named `exp_design`.
+Each row of `exp_design` represents one sample and must correspond to a column of `count_data` in the same order.
+
+
+```{r cs-tgc-ath-exp_design}
+group = sapply(strsplit(colnames(count_data), "_"), "[", 1)
+exp_design <- data.frame(group = factor(group))
+exp_design
+```
+
+The count matrix and experimental design are then combined in a `SeqCountData` object.
+
+```{r cs-tgc-ath-expmx}
+x <- newSeqCountData(count_data, exp_design = exp_design)
+```
+
+The `calc_nf()` function estimates normalization factors using DEGES,
+which repeatedly performs four steps:
+
+1. Estimate provisional normalization factors.
+2. Identify candidate DEGs.
+3. Exclude those candidate genes.
+4. Recalculate the normalization factors.
+
+By default, `calc_nf()` uses TMM normalization and a `r pkg("edgeR", "bioc")`
+quasi-likelihood test during DEG elimination.
+
+```{r cs-tgc-ath-calc_nf}
+x <- calc_nf(x)
+```
+
+The estimated normalization factors are stored in the `meta` slot.
+They are combined with the library sizes when fitting the downstream statistical model.
+
+```{r cs-tgc-ath-show-nf}
+x@meta$nf
+```
+
+To identify DEGs using these normalization factors,
+use `as_DGEList()` to convert the current object to a `r pkg("edgeR", "bioc")` `DGEList`,
+then fit the statistical model with `r pkg("edgeR", "bioc")`.
+
+
+```{r cs-tgc-ath-test}
+d <- as_DGEList(x)
+
+design = model.matrix(~ group, data = exp_design)
+
+d <- estimateDisp(d, design = design)
+fit <- glmQLFit(d, design = design)
+qlf <- glmQLFTest(fit, coef = 2)
+```
+
+After testing, extract the results for all genes.
+
+```{r cs-tgc-ath-results}
+test_stats <- topTags(qlf, n = nrow(d$counts), sort.by = "none")$table
+head(test_stats)
+```
+
+An MA plot displays the log fold change of each gene against its average expression level.
+The following example highlights genes with a false discovery rate (FDR) below 0.01 and an absolute log2 fold change greater than 1.
+
+```{r cs-tgc-ath-maplot}
+is_deg <- (test_stats$FDR < 0.01) & (abs(test_stats$logFC) > 1)
+gene_colors <- ifelse(is_deg, "#B24745", "#ADADAD")
+plot_ma(x, col = gene_colors)
+```
+
+The significance thresholds used here are examples.
+Appropriate thresholds depend on the study design and should be defined before the results are interpreted.
+
+
+DEGES-based normalization can also use functions from `r pkg("DESeq2", "bioc")`.
+For example, relative log expression (RLE) normalization can be combined with a `r pkg("DESeq2", "bioc")`
+test for DEG screening during the elimination step.
+Because `calc_nf()` uses `r pkg("edgeR", "bioc")` functions by default,
+specify the `r pkg("DESeq2", "bioc")` functions through the `norm_func`
+and `test_func` arguments:
+
+```{r cs-tgc-ath-DESeq2-norm}
+x <- newSeqCountData(count_data, exp_design = exp_design)
+x <- calc_nf(x, norm_func = norm_rle, test_func = test_deseq2)
+```
+
+Next, use `as_DESeqDataSet()` to convert the object to a `DESeqDataSet`,
+then perform downstream DEG testing with `r pkg("DESeq2", "bioc")`.
+
+
+```{r cs-tgc-ath-DESeq2-test}
+dds <- as_DESeqDataSet(x)
+
+dds <- DESeq2::estimateDispersions(dds)
+dds <- DESeq2::nbinomLRT(dds, full = ~ group, reduced = ~ 1)
+test_stats <- DESeq2::results(dds)
+head(test_stats)
+```
+
+With `full = ~ group` and `reduced = ~ 1`,
+the likelihood ratio test (LRT) compares a full model containing `group`
+with a reduced model that excludes `group`.
+It therefore tests whether group membership
+explains a significant amount of variation in gene expression.
+
+The results can also be visualized with an MA plot.
+
+```{r cs-tgc-ath-DESeq2-maplot}
+is_deg <- (test_stats$padj < 0.05) & (abs(test_stats$log2FoldChange) > 1)
+gene_colors <- ifelse(is_deg, "#B24745", "#ADADAD")
+
+ma_plot <- plot_ma(x, col = gene_colors)
+ma_plot + ggtitle("Shoot apex versus leaf: DESeq2")
+```
+
+
+The examples above use either `r pkg("edgeR", "bioc")` or `r pkg("DESeq2", "bioc")`
+for both DEGES normalization and downstream DEG testing.
+These components can also be combined differently. For example, DEGES normalization can use
+`r pkg("edgeR", "bioc")` functions before downstream testing with `r pkg("DESeq2", "bioc")`,
+or the packages can be used in the opposite order.
+
+
+### Multi-group comparison
+
+RNA-seq experiments often include more than two groups,
+for example when comparing expression across treatments or tissues.
+Here, we analyze an RNA-seq count matrix from multiple tissues of *Oryza sativa* Japonica Group
+to identify genes whose expression varies among tissues.
+The prepared count data is available from the
+[`docs/data`](https://github.com/bitdessin/seqpatch/tree/main/docs/data) directory
+of the `r pkg("seqpatch")` GitHub repository.
+The original dataset is available from Expression Atlas under accession
+[E-MTAB-2037](https://www.ebi.ac.uk/gxa/experiments/E-MTAB-2037) [@E-MTAB-2037].
+
+
+```{r cs-mgc-rice-load-data}
+count_data <- read.table("data/rice.counts.txt.gz", header = TRUE, row.names = 1, sep = "\t")
+keep <- rowSums(cpm(count_data) > 5) > ncol(count_data) / 2
+count_data <- count_data[keep, , drop = FALSE]
+head(count_data)
+
+group = sapply(strsplit(colnames(count_data), "_"), "[", 1)
+exp_design <- data.frame(group = factor(group))
+head(exp_design)
+```
+
+The count matrix and experimental design are then combined in a `SeqCountData` object.
+
+
+```{r cs-mgc-rice-expmx}
+x <- newSeqCountData(count_data, exp_design = exp_design)
+```
+
+By default, `calc_nf()` uses TMM normalization and a `r pkg("edgeR", "bioc")`
+quasi-likelihood test during DEG elimination.
+In a multi-group design, the default DEGES-based workflow screens candidate DEGs
+across all groups using an omnibus-style test.
+If normalization should remove candidate DEGs for a specific comparison,
+such as leaf versus seed, see the [Advanced Usage](#advanced-usage) chapter.
+
+```{r cs-mgc-rice-calcnf}
+x <- calc_nf(x)
+```
+
+Convert the normalized object into a `r pkg("edgeR", "bioc")` `DGEList`,
+then perform an omnibus DEG test across tissues.
+
+```{r cs-mgc-rice-edgeR}
+d <- as_DGEList(x)
+
+design <- model.matrix(~ group, data = exp_design)
+d <- estimateDisp(d, design = design)
+fit <- glmQLFit(d, design = design)
+qlf <- glmQLFTest(fit, coef = 2:ncol(design))
+
+test_stats <- topTags(qlf, n = nrow(d$counts), sort.by = "none")$table
+head(test_stats)
+```
+
+`coef = 2:ncol(design)` tests whether each gene differs among the tissue groups.
+For a specific tissue comparison, set `coef` accordingly or use the `contrast` argument.
+Refer to the `r pkg("edgeR", "bioc")` documentation for detailed usage.
+
+
+
+The same multi-group comparison can be performed entirely with `r pkg("DESeq2", "bioc")` functions.
+First, estimate DEGES normalization factors using RLE normalization and
+`r pkg("DESeq2", "bioc")`-based DEG screening by setting `norm_func = norm_rle`
+and `test_func = test_deseq2`. Next, convert the normalized object to a `DESeqDataSet`
+and use an LRT to test for expression differences among groups.
+
+```{r cs-mgc-rice-DESeq2}
+x <- newSeqCountData(count_data, exp_design = exp_design)
+
+x <- calc_nf(x, norm_func = norm_rle, test_func = test_deseq2)
+
+dds <- as_DESeqDataSet(x, design = ~ group)
+
+dds <- estimateDispersions(dds)
+dds <- nbinomLRT(dds, full = ~ group, reduced = ~ 1)
+test_stats <- results(dds)
+head(test_stats)
+```
+
+With `full = ~ group` and `reduced = ~ 1`, the LRT compares a full model containing
+the group effect with a reduced model that excludes it. This provides an omnibus test
+of whether expression differs among any of the tissue groups.
+
+
+### Multi-factor comparison
+
+Some RNA-seq experiments include multiple experimental factors,
+such as treatment, time point, tissue, genotype, and batch.
+A multi-factor model can account for these factors simultaneously
+and test whether the effect of one factor depends on another.
+
+Common biological questions include:
+
+* Is there a difference between treatment and control?
+* Is there a difference between tissues?
+* Does the treatment effect depend on time point?
+* Does the genotype effect depend on tissue?
+* Within a treatment group, does gene expression differ between time points?
+
+The statistical design should be selected according to the biological question.
+
+In this example, we analyze soybean RNA-seq data from control
+and treated leaves collected at several time points after water-deficit treatment [@E-GEOD-69469].
+The example count data is available from the
+[`docs/data`](https://github.com/bitdessin/seqpatch/tree/main/docs/data) directory
+of the `r pkg("seqpatch")` GitHub repository.
+The original dataset is available from Expression Atlas under accession
+[E-GEOD-69469](https://www.ebi.ac.uk/gxa/experiments/E-GEOD-69469/Results).
+
+
+```{r cs-mfc-soybean-load-data}
+count_data <- read.table("data/soybean.counts.txt.gz", header = TRUE, row.names = 1, sep = "\t")
+keep <- rowSums(cpm(count_data) > 5) > ncol(count_data) / 2
+count_data <- count_data[keep, , drop = FALSE]
+head(count_data)
+
+group = sapply(strsplit(colnames(count_data), "_"), "[", 1)
+tp = sapply(strsplit(colnames(count_data), "_"), "[", 2)
+exp_design <- data.frame(group = factor(group), timepoint = factor(tp))
+head(exp_design)
+```
+
+Create a `SeqCountData` object from the prepared count matrix and experimental design.
+
+```{r cs-mfc-soybean-expmx}
+x <- newSeqCountData(count_data, exp_design = exp_design)
+```
+
+During DEGES-based normalization, candidate DEGs are removed from the data
+before the normalization factors are recomputed from the remaining genes.
+By default, `calc_nf()` screens candidate DEGs using the available experimental design,
+so genes associated with any modeled effect can be excluded from normalization factor estimation.
+
+```{r cs-mfc-soybean-calcnf}
+x <- calc_nf(x)
+```
+
+If normalization should remove candidate DEGs for a specific comparison,
+such as control versus treatment after adjusting for time point,
+see the [Advanced Usage](#advanced-usage) chapter.
+
+Then convert the normalized object into a `r pkg("edgeR", "bioc")` `DGEList`
+and run a `r pkg("edgeR", "bioc")` quasi-likelihood test for the treatment effect while adjusting for time point;
+that is, `coef = 2` in this design.
+
+```{r cs-mfc-soybean-edgeR}
+d <- as_DGEList(x)
+
+design <- model.matrix(~ group + timepoint, data = exp_design)
+
+d <- estimateDisp(d, design = design)
+fit <- glmQLFit(d, design = design)
+qlf <- glmQLFTest(fit, coef = 2)
+
+```
+
+Do not assume that a biological effect is always represented by `coef = 2`.
+The coefficient number depends on the factor levels and their reference levels,
+the order of terms in the model, and whether the model contains interaction terms.
+Before running a statistical test, inspect the design matrix column names.
+After confirming the meaning of each coefficient, test the coefficient of interest.
+In this example, `coef = 2` corresponds to the treatment effect used above.
+
+
+```{r cs-mfc-soybean-edgeR-coef}
+colnames(design)
+```
+
+Finally, extract the results.
+
+```{r cs-mfc-soybean-edgeR-results}
+test_stats <- topTags(qlf, n = nrow(d$counts), sort.by = "none")$table
+head(test_stats)
+```
+
+
+Here, the analysis compares treatment groups
+while accounting for differences among time points.
+When the model includes interaction terms,
+the coefficient for a main effect describes
+that effect only at the reference level of the other factor.
+It should not be interpreted as the average effect across all tissues,
+time points, or developmental stages.
+Therefore, the coefficient or contrast must be selected according
+to the specific biological comparison of interest.
+
+
+The same multi-factor comparison can be performed with `r pkg("DESeq2", "bioc")`.
+
+
+```{r cs-mfc-soybean-DESeq2}
+library(DESeq2)
+
+x <- newSeqCountData(count_data, exp_design = exp_design)
+x <- calc_nf(x, norm_func = norm_rle, test_func = test_deseq2)
+
+dds <- as_DESeqDataSet(x, design = ~ group + timepoint)
+
+dds <- estimateDispersions(dds)
+dds <- nbinomLRT(dds, full = ~ group + timepoint, reduced = ~ timepoint)
+test_stats <- results(dds)
+head(test_stats)
+```
+
+The interpretation of an LRT is determined by the difference between the full and reduced models.
+Here, the reduced model removes all terms containing `group`.
+The test therefore asks whether treatment-related terms improve model fit.
+It does not represent a single pairwise contrast.

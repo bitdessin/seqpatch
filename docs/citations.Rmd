@@ -1,0 +1,29 @@
+# Citations {-}
+
+When referring to DEGES-based normalization, please cite the original `r pkg("TCC", "bioc")` paper:
+
+- Sun J, Nishiyama T, Shimizu K, Kadota K.
+    TCC: an R package for comparing tag count data with robust normalization strategies.
+    BMC Bioinformatics. 14:219, 2013.
+    [10.1186/1471-2105-14-219](https://doi.org/10.1186/1471-2105-14-219)
+
+Also cite the method papers associated with the normalization and DEG screening functions
+used in the DEGES workflow.
+
+- If `norm_tmm()` is used, cite the TMM normalization paper:
+    Robinson MD, Oshlack A.
+    A scaling normalization method for DEG analysis of RNA-seq data.
+    Genome Biology. 11:R25, 2010.
+    [10.1186/gb-2010-11-3-r25](https://doi.org/10.1186/gb-2010-11-3-r25)
+
+- If `test_edger()` or other `r pkg("edgeR", "bioc")`-based functions are used, cite `r pkg("edgeR", "bioc")`:
+    Chen Y, Chen L, Lun ATL, Baldoni PL, Smyth GK.
+    edgeR v4: powerful differential analysis of sequencing data with expanded functionality and improved support for small counts and larger datasets.
+    Nucleic Acids Research. 53:gkaf018, 2025.
+    [10.1093/nar/gkaf018](https://doi.org/10.1093/nar/gkaf018)
+
+- If `norm_rle()`, `test_deseq2()`, or other `r pkg("DESeq2", "bioc")`-based functions are used, cite `r pkg("DESeq2", "bioc")`:
+    Love MI, Huber W, Anders S.
+    Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2.
+    Genome Biology. 15:550, 2014.
+    [10.1186/s13059-014-0550-8](https://doi.org/10.1186/s13059-014-0550-8)

@@ -1,0 +1,38 @@
+Package: seqpatch
+Type: Package
+Title: Practical Patches for RNA-seq Count Data Analysis
+Version: 0.0.1
+Authors@R: person(given = "Jianqiang", family = "Sun",
+    email = "sun@bitdessin.dev",
+    role = c("cre", "aut"),
+    comment = c(ORCID = "0000-0002-3438-3199"))
+Description: Provides a compact toolkit for analyzing bulk RNA-seq count data.
+    Its core features include normalization based on the differentially
+    expressed gene elimination strategy (DEGES), which reduces the influence
+    of candidate differentially expressed genes when estimating sample-specific
+    scaling factors. The package also provides visualization functions and
+    count data simulation utilities for methodological evaluation.
+License: MIT + file LICENSE
+URL: https://github.com/bitdessin/seqpatch
+BugReports: https://github.com/bitdessin/seqpatch/issues
+Depends:
+    R (>= 4.1.0)
+Imports:
+    methods,
+    rlang,
+    stats,
+    ggplot2
+Suggests:
+    SummarizedExperiment,
+    ExpressionAtlas,
+    DESeq2,
+    edgeR,
+    baySeq,
+    TCC,
+    pROC,
+    testthat (>= 3.0.0)
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Config/testthat/edition: 3

@@ -1,0 +1,12 @@
+output_dir: "_html"
+before_chapter_script: "_config.R"
+delete_merged_file: false
+
+rmd_files: [
+  "index.Rmd",
+  "installation.Rmd",
+  "norm.Rmd",
+  "sim.Rmd",
+  "citations.Rmd",
+  "references.Rmd"
+]

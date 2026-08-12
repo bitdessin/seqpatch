@@ -1,0 +1,226 @@
+## Simulating group comparison data
+
+### Basic group comparison simulation
+
+The simplest call to `sim_gene_counts()` creates
+a two-group count matrix containing 10,000 genes with three replicates per group.
+The function returns a `SeqCountData` object whose `data` slot contains the count matrix
+and whose `exp_design` slot contains the sample grouping.
+
+```{r sim-std-tgc}
+library(seqpatch)
+set.seed(1)
+
+x <- sim_gene_counts()
+x
+```
+
+The simulation parameters are stored in `x@meta$sim_params`.
+These parameters can be inspected through the object's slots.
+
+
+```{r sim-std-tgc-simparams}
+x@meta$sim_params@n_genes
+x@meta$sim_params@p_DEG
+head(x@meta$sim_params@params)
+head(x@meta$sim_params@fc)
+```
+
+Because the true mean and fold-change parameters are known,
+differentiall expressed gene (DEG) status can be defined directly from the simulated fold change matrix.
+The `def_DEG()` function marks genes as true DEGs when their largest between-group fold change
+is at least the cutoff specified by `fc`.
+The default cutoff is 2.
+
+```{r sim-std-tgc-degdef}
+is_DEG <- def_DEG(x)
+head(is_DEG)
+```
+
+An MA plot provides a direct view of the simulated counts and the known true DEGs.
+Because `plot_ma()` uses normalized counts, estimate normalization factors before plotting.
+Here, simulated DEGs are highlighted in red, whereas non-DEGs are shown in gray.
+
+```{r sim-std-tgc-viz}
+x <- calc_nf(x)
+
+gene_colors <- ifelse(is_DEG, "#B24745", "#ADADAD")
+plot_ma(x, col = gene_colors)
+```
+
+
+The number of genes and the degree of DEG imbalance can be changed through the corresponding arguments.
+In the following example, a larger proportion of DEGs is assigned to the second group,
+creating an asymmetric expression pattern between the groups.
+
+```{r sim-std-tgc-args}
+set.seed(1)
+
+x <- sim_gene_counts(
+    n_genes = 2000,
+    n_replicates = c(4, 4),
+    p_DEG = c(0.05, 0.15),
+    fc_mean = c(8, 2),
+    group_names = c("control", "stress")
+)
+
+is_DEG <- def_DEG(x, fc = 2)
+
+x <- calc_nf(x)
+
+gene_colors <- ifelse(is_DEG, "#B24745", "#ADADAD")
+plot_ma(x, col = gene_colors)
+```
+
+
+To simulate a comparison with three groups, provide a replicate count, DEG proportion,
+and mean fold change for each group.
+The example below creates three groups with different proportions of DEGs.
+
+```{r sim-std-mgc}
+set.seed(1)
+
+x <- sim_gene_counts(
+    n_replicates = c(3, 3, 3),
+    p_DEG = c(0.05, 0.10, 0.15),
+    fc_mean = c(4, 4, 4),
+    group_names = c("leaf", "root", "shoot")
+)
+x
+```
+
+
+### Randomizing DEG fold changes
+
+#### Lognormal fold changes
+
+By default, `sim_gene_counts()` samples fold changes for genes assigned as DEGs
+from a lognormal distribution.
+This produces heterogeneous effect sizes, which more closely resemble typical RNA-seq datasets
+than simulations that assign the same fold change to every DEG.
+
+With randomized fold changes, `fc_mean` is interpreted as the mean fold change for genes assigned as DEGs.
+For this distribution, `fc_sd` is the standard deviation on the natural log fold-change scale
+and controls the spread of the sampled values.
+
+
+```{r sim-random-fc-lognormal}
+set.seed(1)
+
+x <- sim_gene_counts(
+    fc_dist = "lognormal",
+    fc_mean = c(4, 4),
+    fc_sd = 0.5,
+    group_names = c("control", "stress")
+)
+
+true_fc <- x@meta$sim_params@fc[, "stress"]
+summary(true_fc[true_fc != 1])
+```
+
+The sampled fold-change matrix is stored in `x@meta$sim_params@fc`.
+The `def_DEG()` function uses these fold changes to define the true DEG status.
+Because this classification is based on a fold-change cutoff,
+the resulting number of true DEGs may differ from the proportion specified by the `p_DEG` argument.
+
+
+```{r sim-random-fc-viz}
+is_DEG <- def_DEG(x, fc = 2)
+table(is_DEG)
+
+x <- calc_nf(x, iter = 0)
+
+gene_colors <- ifelse(is_DEG, "#B24745", "#ADADAD")
+plot_ma(x, col = gene_colors) + ggtitle("lognormal")
+```
+
+
+#### Gamma fold changes
+
+The gamma distribution provides another option for generating positive fold changes.
+Here, the mean fold change is again set by `fc_mean`,
+while `fc_sd` controls the coefficient of variation.
+
+```{r sim-random-fc-gamma}
+set.seed(1)
+
+x <- sim_gene_counts(
+    fc_dist = "gamma",
+    fc_mean = c(4, 4),
+    fc_sd = 0.5,
+    group_names = c("control", "stress")
+)
+
+true_fc <- x@meta$sim_params@fc[, "stress"]
+summary(true_fc[true_fc != 1])
+
+x <- calc_nf(x, iter = 0)
+
+is_DEG <- def_DEG(x, fc = 2)
+gene_colors <- ifelse(is_DEG, "#B24745", "#ADADAD")
+plot_ma(x, col = gene_colors) + ggtitle("gamma")
+```
+
+
+#### Fixed fold changes
+
+Fixed fold changes are available for more controlled simulations.
+Set `fc_dist = "fixed"` when every DEG assigned to a group
+should receive the exact value specified by `fc_mean`.
+
+```{r sim-fixed-fc}
+set.seed(1)
+
+x <- sim_gene_counts(
+    fc_dist = "fixed",
+    fc_mean = c(4, 4),
+    group_names = c("control", "stress")
+)
+
+true_fc <- x@meta$sim_params@fc[, "stress"]
+unique(true_fc[true_fc != 1])
+
+x <- calc_nf(x, iter = 0)
+
+is_DEG <- def_DEG(x, fc = 2)
+gene_colors <- ifelse(is_DEG, "#B24745", "#ADADAD")
+plot_ma(x, col = gene_colors) + ggtitle("fixed")
+```
+
+### Using custom seed matrices
+
+By default, `r pkg("seqpatch")` uses the bundled `arab` dataset,
+an *Arabidopsis thaliana* RNA-seq count matrix,
+to construct the population of gene-level mean and variance parameters used for simulation.
+
+```{r sim-load-arab}
+data(arab, package = "seqpatch")
+head(arab)
+```
+
+The `sim_gene_counts()` function can also use a user-supplied count matrix
+as the seed population.
+The example below uses the soybean count matrix stored in
+[`docs/data`](https://github.com/bitdessin/seqpatch/tree/main/docs/data) directory
+as the seed matrix.
+
+```{r sim-load-seedmatrix}
+seed_counts <- read.table("data/soybean.counts.txt.gz", header = TRUE, sep = "\t", row.names = 1)
+seed_counts <- as.matrix(seed_counts[, 1:3])
+seed_counts <- seed_counts[rowSums(seed_counts) > 0, , drop = FALSE]
+head(seed_counts)
+```
+
+The seed matrix can then be passed to `sim_gene_counts()` to generate a new count matrix.
+
+```{r sim-custom-data-generate}
+set.seed(1)
+
+x <- sim_gene_counts(seed_counts = seed_counts, fc_mean = c(2, 2))
+is_DEG <- def_DEG(x, fc = 2)
+
+x <- calc_nf(x)
+
+gene_colors <- ifelse(is_DEG, "#B24745", "#ADADAD")
+plot_ma(x, col = gene_colors)
+```

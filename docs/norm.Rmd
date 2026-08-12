@@ -1,0 +1,22 @@
+# DEGES Normalization
+
+This chapter explains how to estimate normalization factors
+with the DEGES-based methods and use them in downstream DEG analysis.
+The chapter begins with a concise workflow,
+continues with two-group, multi-group, and multi-factor examples.
+
+
+```{r norm-sec-qs, child='norm/quickstart.Rmd'}
+```
+
+
+```{r norm-sec-basic, child='norm/basic_usage.Rmd'}
+```
+
+
+```{r norm-sec-advanced, child='norm/advanced_usage.Rmd'}
+```
+
+
+```{r norm-sec-tcc, child='norm/tcc.Rmd'}
+```

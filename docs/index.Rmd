@@ -1,0 +1,20 @@
+---
+title: "seqpatch"
+site: bookdown::bookdown_site
+documentclass: book
+output: bookdown::gitbook
+bibliography: ["references.bib"]
+csl: "springer-basic-author-date.csl"
+---
+
+# seqpatch {-}
+
+`r pkg("seqpatch")` is a compact R toolkit for analyzing bulk RNA-seq count data.
+A core feature is normalization based on the DEGES framework,
+the differentially expressed gene (DEG) elimination strategy [@TbT; @TCC].
+DEGES iteratively identifies candidate DEGs and reduces their influence
+when estimating sample specific scaling factors.
+This approach is intended for datasets affected by compositional imbalance
+or strongly asymmetric DEG patterns, for which standard normalization assumptions may not hold.
+The package also provides visualization functions and utilities for simulating count data
+to support methodological evaluation.

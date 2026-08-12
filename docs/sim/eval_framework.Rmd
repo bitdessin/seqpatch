@@ -1,0 +1,204 @@
+## Evaluating DEG workflows
+
+Because the simulation parameters are known,
+`def_DEG()` can be used to determine the true DEG status of each gene.
+This information can be used to evaluate how well a DEG workflow ranks true DEGs ahead of non-DEGs.
+
+This section uses simulated count data to evaluate DEG detection performance
+with the area under the receiver operating characteristic curve (AUC).
+An AUC of 0.5 indicates performance similar to random ranking,
+whereas values closer to 1 indicate better ranking of true DEGs.
+
+First, generate a simulated count dataset.
+
+```{r sim-eval-data}
+set.seed(1)
+
+x <- sim_gene_counts(n_genes = 20000, p_DEG = c(0.01, 0.04), fc_mean = c(4, 4))
+is_DEG <- def_DEG(x, fc = 4)
+
+table(is_DEG)
+```
+
+The following MA plot highlights the true DEGs in the simulated dataset.
+
+```{r sim-eval-data-viz, echo=FALSE, include=TRUE}
+x_norm <- calc_nf(x)
+gene_colors <- ifelse(is_DEG, "#B24745", "#ADADAD")
+
+plot_ma(x_norm, col = gene_colors)
+```
+
+Next, define a helper function to calculate the AUC from gene-level p-values.
+Smaller p-values are converted to larger scores so that genes
+with stronger statistical evidence receive higher ranks.
+
+```{r sim-eval-auc-helper}
+library(pROC)
+
+calc_auc <- function(is_deg, p_value) {
+    p_value[is.na(p_value)] <- 1
+    ranking_score <- -p_value
+    roc_obj <- roc(is_deg, ranking_score)
+    auc_value <- auc(roc_obj)
+    as.numeric(auc_value)
+}
+```
+
+
+### Evaluating the edgeR workflow
+
+This subsection compares a standard `r pkg("edgeR", "bioc")` workflow
+with a workflow that uses DEGES normalization before `r pkg("edgeR", "bioc")` DEG testing.
+
+First, run TMM normalization and a quasi-likelihood test with `r pkg("edgeR", "bioc")`,
+then compute the AUC.
+
+```{r sim-eval-edger-edger}
+library(edgeR)
+
+design <- model.matrix(~ group, data = x@exp_design)
+d1 <- DGEList(counts = x@data, group = x@exp_design$group)
+d1 <- calcNormFactors(d1)
+d1 <- estimateDisp(d1, design)
+fit1 <- glmQLFit(d1, design)
+qlf1 <- glmQLFTest(fit1, coef = 2)
+edger_output1 <- topTags(qlf1, n = nrow(d1$counts), sort.by = "none")$table
+
+calc_auc(is_DEG, edger_output1$PValue)
+```
+
+Next, estimate normalization factors with the DEGES approach using `calc_nf()`.
+The result is converted to a `r pkg("edgeR", "bioc")` object for downstream DEG testing,
+and the AUC is computed from the resulting p-values.
+
+```{r sim-eval-edger-deges}
+x <- calc_nf(x, orm_func = norm_tmm, test_func = test_edger)
+
+design <- model.matrix(~ group, data = x@exp_design)
+d2 <- as_DGEList(x)
+d2 <- estimateDisp(d2, design)
+fit2 <- glmQLFit(d2, design)
+qlf2 <- glmQLFTest(fit2, coef = 2)
+edger_output2 <- topTags(qlf2, n = nrow(d2$counts), sort.by = "none")$table
+
+calc_auc(is_DEG, edger_output2$PValue)
+```
+
+
+### Evaluating the DESeq2 workflow
+
+The `r pkg("DESeq2", "bioc")` workflows can be evaluated in the same way.
+In `r pkg("seqpatch")`, the built-in `test_deseq2()` function uses an LRT
+for DEG screening during DEGES-based normalization.
+Here, four workflows are compared:
+
+1. RLE normalization, followed by a `r pkg("DESeq2", "bioc")` Wald test.
+2. RLE normalization, followed by a `r pkg("DESeq2", "bioc")` LRT.
+3. DEGES using RLE normalization and `r pkg("DESeq2", "bioc")` Wald screening, followed by a `r pkg("DESeq2", "bioc")` Wald test.
+4. DEGES using RLE normalization and `r pkg("DESeq2", "bioc")` LRT screening, followed by a `r pkg("DESeq2", "bioc")` LRT.
+
+
+First, run the `r pkg("DESeq2", "bioc")` Wald test and compute the AUC.
+
+```{r sim-eval-deseq2-Wald}
+library(DESeq2)
+
+col_data <- x@exp_design
+rownames(col_data) <- colnames(x@data)
+design = ~ group
+
+dds1 <- DESeqDataSetFromMatrix(countData = x@data, colData = col_data, design = design)
+dds1 <- estimateSizeFactors(dds1)
+dds1 <- estimateDispersions(dds1)
+dds1 <- nbinomWaldTest(dds1)
+deseq2_output_1 = as.data.frame(results(dds1))
+
+calc_auc(is_DEG, deseq2_output_1$pvalue)
+```
+
+Next, use the same input data to run a `r pkg("DESeq2", "bioc")` LRT.
+
+```{r sim-eval-deseq2-LRT}
+dds2 <- DESeqDataSetFromMatrix(countData = x@data, colData = col_data, design = design)
+dds2 <- estimateSizeFactors(dds2)
+dds2 <- estimateDispersions(dds2)
+dds2 <- nbinomLRT(dds2, full = ~ group, reduced = ~ 1)
+deseq2_output_2 = as.data.frame(results(dds2))
+
+calc_auc(is_DEG, deseq2_output_2$pvalue)
+```
+
+Next, evaluate a DEGES workflow that uses a Wald test during DEG screening.
+Because `r pkg("seqpatch")` does not provide a built-in Wald screening function for `calc_nf()`,
+the example first defines `test_deseq2_wald()`.
+
+```{r sim-eval-deseq2-wald-deges}
+test_deseq2_wald <- function(x, exp_design, nf = NULL, ...) {
+    if (is.null(nf)) nf <- rep(1, ncol(x))
+
+    x <- as.matrix(x)
+    exp_design <- as.data.frame(exp_design)
+    rownames(exp_design) <- colnames(x)
+
+    effective_lib_sizes <- nf * colSums(x)
+
+    dds <- DESeqDataSetFromMatrix(
+        countData = x,
+        colData = exp_design,
+        design = ~ group
+    )
+    sizeFactors(dds) <- effective_lib_sizes / mean(effective_lib_sizes)
+    dds <- estimateDispersions(dds)
+    dds <- nbinomWaldTest(dds)
+
+    test_output <- as.data.frame(results(dds))
+    p <- test_output$pvalue
+    p[is.na(p)] <- 1
+    q <- stats::p.adjust(p, method = "BH")
+
+    data.frame(
+        p_value = p,
+        q_value = q,
+        row.names = NULL,
+        check.names = FALSE
+    )
+}
+
+
+x3 <- calc_nf(x, norm_func = norm_rle, test_func = test_deseq2_wald)
+dds3 <- as_DESeqDataSet(x3)
+dds3 <- estimateDispersions(dds3)
+dds3 <- nbinomWaldTest(dds3)
+deseq2_output_3 = as.data.frame(results(dds3))
+
+calc_auc(is_DEG, deseq2_output_3$pvalue)
+```
+
+Finally, evaluate the DEGES workflow that uses the `r pkg("DESeq2", "bioc")`
+LRT for DEG screening.
+
+```{r sim-eval-deseq2-lrt-deges}
+x4 <- calc_nf(x, norm_func = norm_rle, test_func = test_deseq2)
+dds4 <- as_DESeqDataSet(x4)
+dds4 <- estimateDispersions(dds4)
+dds4 <- nbinomLRT(dds4, full = ~ group, reduced = ~ 1)
+deseq2_output_4 = as.data.frame(results(dds4))
+
+calc_auc(is_DEG, deseq2_output_4$pvalue)
+```
+
+Finally, summarize the AUC values across the four workflows.
+
+
+```{r sim-eval-deseq2-output-summary}
+data.frame(
+    pipeline = c("RLE + Wald", "RLE + LRT", "DEGES(Wald) + Wald", "DEGES(LRT) + LRT"),
+    auc = c(
+        calc_auc(is_DEG, deseq2_output_1$pvalue),
+        calc_auc(is_DEG, deseq2_output_2$pvalue),
+        calc_auc(is_DEG, deseq2_output_3$pvalue),
+        calc_auc(is_DEG, deseq2_output_4$pvalue)
+    )
+)
+```

@@ -1,0 +1,268 @@
+## TCC compatibility
+
+```{r tcc-setup, include=FALSE}
+source("_config.R")
+```
+
+This chapter compares normalization factors estimated by `r pkg("seqpatch")`
+with those obtained from corresponding workflows in `r pkg("TCC", "bioc")`.
+It focuses on normalization factor compatibility and does not compare
+the final DEG results.
+
+```{r tcc-packages, message=FALSE, warning=FALSE}
+library(edgeR)
+library(DESeq2)
+library(TCC)
+library(seqpatch)
+```
+
+### Two-group comparison
+
+This section compares `r pkg("seqpatch")` and `r pkg("TCC", "bioc")`
+using a two-group design.
+The example uses `hypoData`, a small count matrix distributed with `r pkg("TCC", "bioc")`.
+The same count matrix and group labels are supplied to both packages.
+
+```{r tcc-tgc-data}
+data(hypoData, package = "TCC")
+
+group <- factor(c(1, 1, 1, 2, 2, 2))
+exp_design <- data.frame(group = group)
+```
+
+#### edgeR screening
+
+Both `r pkg("seqpatch")` and `r pkg("TCC", "bioc")` support a DEGES workflow
+that estimates TMM normalization factors and screens candidate DEGs with an
+`r pkg("edgeR", "bioc")` quasi-likelihood test.
+With matching DEGES settings, the two packages return identical normalization factors
+in this example.
+
+```{r tcc-tgc-tcc-tmm}
+tcc_tmm <- new("TCC", hypoData, group)
+tcc_tmm <- calcNormFactors(
+    tcc_tmm,
+    norm.method = "tmm",
+    test.method = "edger",
+    iteration = 3,
+    FDR = 0.1,
+    floorPDEG = 0.05
+)
+
+tcc_tmm$norm.factors
+```
+
+
+```{r tcc-tgc-seqpatch-tmm}
+x_tmm <- newSeqCountData(hypoData, exp_design = exp_design)
+x_tmm <- calc_nf(
+    x_tmm,
+    norm_func = norm_tmm,
+    test_func = test_edger,
+    iter = 3,
+    p_cutoff = 0,
+    q_cutoff = 0.1,
+    min_rm_genes = 0.05
+)
+x_tmm@meta$nf
+```
+
+The normalization factors are identical in this example.
+
+```{r tcc-tgc-edgeR-nf-diff}
+tcc_tmm$norm.factors - x_tmm@meta$nf
+```
+
+#### DESeq2 screening
+
+Both `r pkg("seqpatch")` and `r pkg("TCC", "bioc")` also support a DESeq2-based DEGES workflow,
+but the default screening test is not identical for the two-group case.
+`r pkg("seqpatch")` uses relative log expression (RLE) normalization
+with a DESeq2 likelihood ratio test (LRT) during DEGES,
+whereas the original `r pkg("TCC", "bioc")` DESeq2 workflow uses RLE normalization with a Wald test.
+Consequently, the default DESeq2 workflows are expected to produce different normalization factors
+in this example.
+
+```{r tcc-tgc-deseq2}
+tcc_deseq2 <- new("TCC", hypoData, group)
+tcc_deseq2 <- calcNormFactors(
+    tcc_deseq2,
+    norm.method = "deseq2",
+    test.method = "deseq2",
+    iteration = 3,
+    FDR = 0.1,
+    floorPDEG = 0.05
+)
+tcc_deseq2$norm.factors
+```
+
+```{r tcc-tgc-seqpatch-deseq2-lrt}
+x_deseq2_lrt <- newSeqCountData(hypoData, exp_design = exp_design)
+x_deseq2_lrt <- calc_nf(
+    x_deseq2_lrt,
+    norm_func = norm_rle,
+    test_func = test_deseq2,
+    iter = 3,
+    p_cutoff = 0,
+    q_cutoff = 0.1,
+    min_rm_genes = 0.05
+)
+x_deseq2_lrt@meta$nf
+```
+
+To reproduce the normalization factors from the original `r pkg("TCC", "bioc")`
+DESeq2 workflow with `r pkg("seqpatch")`,
+define a custom DEG screening function based on the DESeq2 Wald test.
+The function follows the `calc_nf()` testing interface:
+it receives a count matrix, an experimental design data frame, and normalization factors,
+and then returns a data frame containing `p_value` and `q_value`.
+
+```{r tcc-tgc-seqpatch-deseq2-wald}
+test_deseq2_wald <- function(x, exp_design, nf = NULL, ...) {
+    if (is.null(nf)) nf <- rep(1, ncol(x))
+
+    x <- as.matrix(x)
+    exp_design <- as.data.frame(exp_design)
+    rownames(exp_design) <- colnames(x)
+
+    effective_lib_sizes <- nf * colSums(x)
+
+    dds <- DESeqDataSetFromMatrix(
+        countData = x,
+        colData = exp_design,
+        design = ~ group
+    )
+    sizeFactors(dds) <- effective_lib_sizes / mean(effective_lib_sizes)
+    dds <- estimateDispersions(dds)
+    dds <- nbinomWaldTest(dds)
+
+    test_output <- as.data.frame(results(dds))
+    p <- test_output$pvalue
+    p[is.na(p)] <- 1
+    q <- stats::p.adjust(p, method = "BH")
+
+    data.frame(
+        p_value = p,
+        q_value = q,
+        row.names = NULL,
+        check.names = FALSE
+    )
+}
+
+x_deseq2_wald <- newSeqCountData(hypoData, exp_design = exp_design)
+x_deseq2_wald <- calc_nf(
+    x_deseq2_wald,
+    norm_func = norm_rle,
+    test_func = test_deseq2_wald,
+    iter = 3,
+    p_cutoff = 0,
+    q_cutoff = 0.1,
+    min_rm_genes = 0.05
+)
+x_deseq2_wald@meta$nf
+```
+
+With the custom Wald screening function,
+the normalization factors estimated by `r pkg("seqpatch")` match those produced
+by the original `r pkg("TCC", "bioc")` DESeq2 workflow in this example.
+
+
+```{r tcc-tgc-DESeq2-nf-diff}
+tcc_deseq2$norm.factors - x_deseq2_wald@meta$nf
+```
+
+
+### Multi-group comparison
+
+This section compares `r pkg("seqpatch")` and `r pkg("TCC", "bioc")`
+using a multi-group design.
+The example uses `hypoData_mg`, a simulated dataset distributed with `r pkg("TCC", "bioc")`.
+It contains three groups with three replicates per group.
+
+
+```{r tcc-mgt-data}
+data(hypoData_mg, package = "TCC")
+group <- factor(c(1, 1, 1, 2, 2, 2, 3, 3, 3))
+exp_design <- data.frame(group = group)
+```
+
+
+#### edgeR screening
+
+For this multi-group example, both packages use matching TMM and `r pkg("edgeR", "bioc")`
+settings during DEGES.
+The estimated normalization factors are therefore identical,
+as in the two-group TMM and `r pkg("edgeR", "bioc")` comparison.
+
+```{r tcc-mgc-tcc-tmm}
+tcc_tmm <- new("TCC", hypoData_mg, group)
+tcc_tmm <- calcNormFactors(
+    tcc_tmm,
+    norm.method = "tmm",
+    test.method = "edger",
+    iteration = 3,
+    FDR = 0.1,
+    floorPDEG = 0.05
+)
+
+tcc_tmm$norm.factors
+```
+
+
+```{r tcc-mgc-seqpatch-tmm}
+x_tmm <- newSeqCountData(hypoData_mg, exp_design = exp_design)
+x_tmm <- calc_nf(
+    x_tmm,
+    norm_func = norm_tmm,
+    test_func = test_edger,
+    iter = 3,
+    p_cutoff = 0,
+    q_cutoff = 0.1,
+    min_rm_genes = 0.05
+)
+
+x_tmm@meta$nf 
+```
+
+```{r tcc-mgc-edgeR-nf-diff}
+tcc_tmm$norm.factors - x_tmm@meta$nf
+```
+
+#### DESeq2 screening
+
+For the multi-group comparison,
+the DESeq2-based DEGES workflow in `r pkg("TCC", "bioc")` uses RLE normalization
+and an LRT to screen candidate DEGs.
+This matches the default `r pkg("seqpatch")` DESeq2 workflow,
+so the normalization factors are expected to be identical with matching DEGES settings.
+
+```{r tcc-mgc-deseq2}
+tcc_deseq2 <- new("TCC", hypoData_mg, group)
+tcc_deseq2 <- calcNormFactors(
+    tcc_deseq2,
+    norm.method = "deseq2",
+    test.method = "deseq2",
+    iteration = 3,
+    FDR = 0.1,
+    floorPDEG = 0.05
+)
+tcc_deseq2$norm.factors
+```
+
+```{r tcc-mgc-seqpatch-deseq2}
+x_deseq2 <- newSeqCountData(hypoData_mg, exp_design = exp_design)
+x_deseq2 <- calc_nf(
+    x_deseq2,
+    norm_func = norm_rle,
+    test_func = test_deseq2,
+    iter = 3,
+    p_cutoff = 0,
+    q_cutoff = 0.1,
+    min_rm_genes = 0.05
+)
+x_deseq2@meta$nf
+```
+
+```{r tcc-mgc-DESeq2-nf-diff}
+tcc_deseq2$norm.factors - x_deseq2@meta$nf
+```

@@ -1,0 +1,146 @@
+
+## Simulating time-series data
+
+The `sim_gene_ts_counts()` function generates RNA-seq count data for time-series experiments.
+Each gene is assigned a temporal expression pattern,
+and replicate counts are sampled at the specified time points.
+As with `sim_gene_counts()`, the result is returned as a `SeqCountData` object.
+
+### Basic time-series simulation
+
+The default call generates 10,000 genes measured at eight time points,
+with three biological replicates per time point.
+Genes are distributed equally among eight temporal patterns,
+including increasing, decreasing, transient, oscillatory, and null patterns.
+
+```{r sim-ts-standard}
+set.seed(1)
+
+x_ts <- sim_gene_ts_counts()
+x_ts
+```
+
+The `exp_design` slot records the time point and biological replicate associated with each sample.
+The assigned temporal patterns and their realized proportions are stored in
+`x_ts@meta$ts_truth`.
+
+```{r sim-ts-standard-truth}
+head(x_ts@exp_design)
+table(x_ts@meta$ts_truth$pattern)
+x_ts@meta$ts_truth$realized_p_patterns
+```
+
+The temporal fold-change matrix is stored in `x_ts@meta$sim_params@fc`.
+Rows correspond to genes, and columns correspond to time points.
+The pattern templates and gene-specific dynamic range fold changes
+can also be inspected through the simulation metadata.
+
+```{r sim-ts-standard-params}
+head(x_ts@meta$sim_params@fc)
+x_ts@meta$ts_truth$pattern_templates
+head(x_ts@meta$ts_truth$dynamic_fc)
+```
+
+The simulated expression profiles can be visualized with `plot_gene_profiles()`.
+Here, genes are grouped by their true temporal patterns. Normalized counts are averaged
+across biological replicates at each time point and scaled within each gene before plotting.
+Light lines represent individual genes, and the darker line in each panel represents
+the mean profile for that temporal pattern.
+
+```{r sim-ts-standard-profiles}
+x_ts <- calc_nf(x_ts)
+plot_gene_profiles(x_ts, cl = x_ts@meta$ts_truth$pattern)
+```
+
+### Customizing sampling designs and temporal patterns
+
+Use `ts` to define the sampling schedule and `n_replicates`
+to set the number of biological replicates at each time point.
+The time points may be unevenly spaced.
+In the following example, the number of replicates differs among sampling times.
+
+```{r sim-ts-custom-design}
+set.seed(1)
+
+x_ts <- sim_gene_ts_counts(
+    n_genes = 2000,
+    ts = c(0, 1, 3, 7, 14, 21),
+    n_replicates = c(3, 3, 3, 4, 4, 4)
+)
+
+table(x_ts@exp_design$group)
+dim(x_ts@data)
+
+x_ts <- calc_nf(x_ts)
+plot_gene_profiles(x_ts, cl = x_ts@meta$ts_truth$pattern)
+```
+
+The relative frequencies of the temporal patterns are controlled by `p_patterns`.
+A named vector may contain any subset of the available patterns.
+Omitted patterns are assigned a probability of zero.
+This example generates increasing, decreasing, early peak, and null genes.
+
+```{r sim-ts-custom-patterns}
+set.seed(1)
+
+x_ts <- sim_gene_ts_counts(
+    n_genes = 2000,
+    ts = c(0, 2, 4, 8, 12),
+    n_replicates = 3,
+    p_patterns = c(
+        increase = 0.20,
+        decrease = 0.20,
+        early_peak = 0.20,
+        null = 0.40
+    )
+)
+
+table(x_ts@meta$ts_truth$pattern)
+
+x_ts <- calc_nf(x_ts)
+plot_gene_profiles(x_ts, cl = x_ts@meta$ts_truth$pattern)
+```
+
+### Controlling dynamic range fold changes
+
+By default, gene-specific dynamic range fold changes are sampled from a lognormal distribution.
+The `fc_mean` argument controls their mean,
+and `fc_sd` controls their spread on the natural log fold-change scale.
+
+```{r sim-ts-random-fc}
+set.seed(1)
+
+x_ts <- sim_gene_ts_counts(
+    fc_mean = 6,
+    fc_dist = "lognormal",
+    fc_sd = 0.5
+)
+
+summary(x_ts@meta$ts_truth$dynamic_fc)
+```
+
+For a controlled effect size, set `fc_dist = "fixed"`.
+All genes assigned to a non-null pattern then receive the same dynamic range fold change,
+whereas null genes retain a fold change of 1.
+
+```{r sim-ts-fixed-fc}
+set.seed(1)
+
+x_ts <- sim_gene_ts_counts(
+    fc_mean = 4,
+    fc_dist = "fixed"
+)
+
+table(x_ts@meta$ts_truth$dynamic_fc)
+```
+
+Sample-specific library-size variation is controlled by `cv_libsize`.
+The realized factors are rescaled to an arithmetic mean of 1 and stored in
+`x_ts@meta$libsize_factors`.
+
+```{r sim-ts-library-size}
+set.seed(1)
+
+x_ts <- sim_gene_ts_counts(cv_libsize = 0.3)
+summary(x_ts@meta$libsize_factors)
+```

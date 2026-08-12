@@ -1,0 +1,22 @@
+# Simulation Studies
+
+This chapter introduces the simulation utilities in `r pkg("seqpatch")`.
+The `sim_gene_counts()` function generates count data for group comparisons,
+whereas `sim_gene_ts_counts()` generates count data with defined temporal expression patterns.
+For group comparison simulations, `def_DEG()` identifies the true DEG status
+from the simulated fold changes and a user-defined cutoff.
+Together, these functions support controlled evaluations of normalization and
+differentially expressed gene (DEG) workflows,
+including settings with compositional imbalance or asymmetric DEG patterns.
+
+
+```{r sim-sec-counts, child='sim/sim_counts.Rmd'}
+```
+
+
+```{r sim-sec-tscounts, child='sim/sim_ts_counts.Rmd'}
+```
+
+
+```{r sim-sec-framwork, child='sim/eval_framework.Rmd'}
+```

@@ -1,0 +1,57 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      - name: Setup Pandoc
+        uses: r-lib/actions/setup-pandoc@v2
+
+      - name: Install R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: check-1
+          needs: check
+
+      - name: Read package metadata
+        run: |
+          PKG_NAME=$(awk -F': *' '$1=="Package"{print $2}' DESCRIPTION)
+          PKG_VERSION=$(awk -F': *' '$1=="Version"{print $2}' DESCRIPTION)
+          PKG_FILE="${PKG_NAME}_${PKG_VERSION}.tar.gz"
+
+          echo "PKG_NAME=$PKG_NAME" >> "$GITHUB_ENV"
+          echo "PKG_VERSION=$PKG_VERSION" >> "$GITHUB_ENV"
+          echo "PKG_FILE=$PKG_FILE" >> "$GITHUB_ENV"
+
+      - name: Build package
+        run: R CMD build .
+
+      - name: Run package checks
+        run: R CMD check --no-manual --as-cran "$PKG_FILE"
+
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ env.PKG_NAME }} ${{ env.PKG_VERSION }}
+          files: ${{ env.PKG_FILE }}
+          generate_release_notes: true

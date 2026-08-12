@@ -1,0 +1,14 @@
+# Installation
+
+Install `r pkg("seqpatch")` directly from GitHub using `BiocManager::install()`.
+For typical RNA-seq workflows, we also recommend installing `r pkg("edgeR", "bioc")` and `r pkg("DESeq2", "bioc")`.
+These packages provide methods for differentially expressed gene (DEG) testing and optional functions
+used during DEGES-based normalization.
+
+
+```{r installation-package, eval=FALSE}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install(c("edgeR", "DESeq2", "bitdessin/seqpatch"))
+```
